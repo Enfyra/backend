@@ -33,13 +33,7 @@ export class RouteCacheService implements OnModuleInit, OnApplicationBootstrap {
   async onApplicationBootstrap() {
     // IMPORTANT: Check if system tables exist before loading routes
     // Even if metadata loads successfully, system tables may not exist yet
-    const knex = this.queryBuilder.getKnex();
-
-    const hasRouteTable = await knex.schema.hasTable('route_definition');
-    if (!hasRouteTable) {
-      this.logger.warn('⚠️ System tables not initialized yet, skipping route cache load');
-      return;
-    }
+    await this.metadataCacheService.getMetadata();
 
     await this.reload();
   }
@@ -179,6 +173,22 @@ export class RouteCacheService implements OnModuleInit, OnApplicationBootstrap {
     });
     const routes = result.data;
 
+    // Debug: Check for duplicate hooks in routes
+    for (const route of routes) {
+      if (route.hooks && route.hooks.length > 0) {
+        const hookIds = route.hooks.map((h: any) => h.id);
+        const duplicates = hookIds.filter((id: any, index: number) => hookIds.indexOf(id) !== index);
+        if (duplicates.length > 0) {
+          this.logger.warn(`🚨 Route ${route.path} (id=${route.id}) has duplicate hooks:`, {
+            totalHooks: route.hooks.length,
+            hookIds: hookIds,
+            duplicates: duplicates,
+            hooks: route.hooks.map((h: any) => ({ id: h.id, name: h.name }))
+          });
+        }
+      }
+    }
+
     // Get global hooks separately
     const globalHooksResult = await this.queryBuilder.select({
       tableName: 'hook_definition',
@@ -191,9 +201,17 @@ export class RouteCacheService implements OnModuleInit, OnApplicationBootstrap {
     });
     const globalHooks = globalHooksResult.data;
 
-    // Merge global hooks with route hooks
+    // Merge global hooks with route hooks (remove duplicates by id)
     for (const route of routes) {
-      route.hooks = [...globalHooks, ...(route.hooks || [])];
+      const allHooks = [...globalHooks, ...(route.hooks || [])];
+
+      // Remove duplicate hooks by id
+      const uniqueHooks = allHooks.filter((hook, index, self) =>
+        index === self.findIndex((h) => h.id === hook.id)
+      );
+
+      route.hooks = uniqueHooks;
+
       if (!route.targetTables) {
         route.targetTables = [];
       }

@@ -45,11 +45,20 @@ export async function generateSQLFromDiff(
     const columnDef = generateColumnDefinition(col, dbType);
     sqlStatements.push(`ALTER TABLE ${qt(tableName)} ADD COLUMN ${qt(col.name)} ${columnDef}`);
 
+    // Skip FK constraint if column is nullable (will have NULL values that violate constraint)
+    // User must populate data first, then manually add constraint or change to NOT NULL
     if (col.isForeignKey && col.foreignKeyTarget) {
-      const onDelete = col.isNullable !== false ? 'SET NULL' : 'RESTRICT';
-      sqlStatements.push(
-        `ALTER TABLE ${qt(tableName)} ADD CONSTRAINT ${qt(`fk_${tableName}_${col.name}`)} FOREIGN KEY (${qt(col.name)}) REFERENCES ${qt(col.foreignKeyTarget)} (${qt(col.foreignKeyColumn || 'id')}) ON DELETE ${onDelete} ON UPDATE CASCADE`
-      );
+      if (col.isNullable === false) {
+        // NOT NULL columns: Use RESTRICT (don't allow deleting parent if children exist)
+        const onDelete = 'RESTRICT';
+        sqlStatements.push(
+          `ALTER TABLE ${qt(tableName)} ADD CONSTRAINT ${qt(`fk_${tableName}_${col.name}`)} FOREIGN KEY (${qt(col.name)}) REFERENCES ${qt(col.foreignKeyTarget)} (${qt(col.foreignKeyColumn || 'id')}) ON DELETE ${onDelete} ON UPDATE CASCADE`
+        );
+      } else {
+        // NULLABLE columns: Skip FK constraint to avoid errors with existing NULL data
+        // User should populate data first, then add FK constraint manually if needed
+        logger.log(`  ⏭️  Skipping FK constraint for nullable column ${col.name} - user must populate data first`);
+      }
     }
   }
 

@@ -36,10 +36,18 @@ export class MetadataCacheService implements OnApplicationBootstrap, OnModuleIni
 
   async onModuleInit() {
     this.subscribe();
+
   }
 
   async onApplicationBootstrap() {
-    await this.reload();
+    this.logger.log('🚀 MetadataCacheService.onApplicationBootstrap() called');
+    try {
+      await this.reload();
+      this.logger.log('✅ MetadataCacheService initialization completed');
+    } catch (error) {
+      this.logger.error('❌ MetadataCacheService initialization failed:', error);
+      throw error;
+    }
   }
 
   /**
@@ -101,12 +109,13 @@ export class MetadataCacheService implements OnApplicationBootstrap, OnModuleIni
    * 2. Metadata from table_definition, column_definition, relation_definition (logical structure)
    */
   private async loadMetadataFromDb(): Promise<EnfyraMetadata> {
+
     this.logger.log('🔄 Loading metadata from database schema + metadata tables...');
 
     // Get all table names from metadata
     const tablesResult = await this.queryBuilder.select({ tableName: 'table_definition' });
     const tables = tablesResult.data;
-    
+
     const tablesList: any[] = [];
     const tablesMap = new Map<string, any>();
 
@@ -315,7 +324,6 @@ export class MetadataCacheService implements OnApplicationBootstrap, OnModuleIni
         tablesList.push(metadata);
         tablesMap.set(table.name, metadata);
 
-      
       } catch (error) {
         this.logger.error(`Failed to load metadata for table ${table.name}:`, error.message);
       }
@@ -432,6 +440,7 @@ export class MetadataCacheService implements OnApplicationBootstrap, OnModuleIni
    * Load metadata from DB and store in memory only
    */
   private async loadAndCacheMetadata(): Promise<EnfyraMetadata> {
+
     const loadStart = Date.now();
     const metadata = await this.loadMetadataFromDb();
     const loadTime = Date.now() - loadStart;
@@ -450,14 +459,19 @@ export class MetadataCacheService implements OnApplicationBootstrap, OnModuleIni
    * Reload metadata from DB (acquire lock → load → publish → save)
    */
   async reload(): Promise<void> {
+    this.logger.log('🔄 reload() called');
     const instanceId = this.instanceService.getInstanceId();
+    this.logger.log(`🆔 Instance ID: ${instanceId.slice(0, 8)}`);
 
     try {
+      this.logger.log('🔐 Attempting to acquire metadata reload lock...');
       const acquired = await this.cacheService.acquire(
         METADATA_RELOAD_LOCK_KEY,
         instanceId,
         REDIS_TTL.RELOAD_LOCK_TTL
       );
+
+      this.logger.log(`🔐 Lock acquired: ${acquired}`);
 
       if (!acquired) {
         this.logger.log('🔒 Another instance is reloading metadata, waiting for broadcast...');

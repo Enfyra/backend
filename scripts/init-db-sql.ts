@@ -8,6 +8,8 @@ import {
   getForeignKeyColumnName,
   getShortFkName,
   getShortIndexName,
+  getShortPkName,
+  getShortFkConstraintName,
 } from '../src/shared/utils/naming-helpers';
 import {
   ColumnDef,
@@ -112,8 +114,15 @@ function parseSnapshotToSchema(snapshot: Record<string, any>): KnexTableSchema[]
             relation.targetTable,
           );
 
-          // Skip if this junction table was already added
-          if (createdJunctionNames.has(junctionTableName)) {
+          // Also check reverse junction table name (in case inverse relation exists)
+          const reverseJunctionName = getJunctionTableName(
+            relation.targetTable,
+            relation.inversePropertyName || 'inverse',
+            tableName,
+          );
+
+          // Skip if this junction table was already added (either direction)
+          if (createdJunctionNames.has(junctionTableName) || createdJunctionNames.has(reverseJunctionName)) {
             continue;
           }
 
@@ -126,7 +135,9 @@ function parseSnapshotToSchema(snapshot: Record<string, any>): KnexTableSchema[]
             sourcePropertyName: relation.propertyName,
           });
 
+          // Add both directions to prevent duplicates
           createdJunctionNames.add(junctionTableName);
+          createdJunctionNames.add(reverseJunctionName);
         }
       }
     }
@@ -439,6 +450,7 @@ async function addForeignKeys(
 async function createJunctionTables(
   knex: Knex,
   schemas: KnexTableSchema[],
+  dbType: string,
 ): Promise<void> {
   console.log('🔗 Creating junction tables...');
 
@@ -467,45 +479,64 @@ async function createJunctionTables(
 
       await knex.schema.createTable(junction.tableName, (table) => {
         // Add source FK with correct type
-        const sourceFkName = getShortFkName(junction.sourceTable, junction.sourcePropertyName, 'src');
         let sourceCol;
         if (sourcePkType === 'uuid') {
           sourceCol = table.uuid(junction.sourceColumn).notNullable();
         } else {
           sourceCol = table.integer(junction.sourceColumn).unsigned().notNullable();
         }
-        
-        sourceCol
+
+        const sourceFk = sourceCol
           .references('id')
           .inTable(junction.sourceTable)
           .onDelete('CASCADE')
-          .onUpdate('CASCADE')
-          .withKeyName(sourceFkName);
+          .onUpdate('CASCADE');
+
+        // Set FK constraint name (use short name for PostgreSQL due to 63 char limit)
+        if (dbType === 'postgres') {
+          const sourceFkName = getShortFkConstraintName(junction.tableName, junction.sourceColumn, 'src');
+          sourceFk.withKeyName(sourceFkName);
+        } else {
+          const sourceFkName = getShortFkName(junction.sourceTable, junction.sourcePropertyName, 'src');
+          sourceFk.withKeyName(sourceFkName);
+        }
 
         // Add target FK with correct type
-        const targetFkName = getShortFkName(junction.sourceTable, junction.sourcePropertyName, 'tgt');
         let targetCol;
         if (targetPkType === 'uuid') {
           targetCol = table.uuid(junction.targetColumn).notNullable();
         } else {
           targetCol = table.integer(junction.targetColumn).unsigned().notNullable();
         }
-        
-        targetCol
+
+        const targetFk = targetCol
           .references('id')
           .inTable(junction.targetTable)
           .onDelete('CASCADE')
-          .onUpdate('CASCADE')
-          .withKeyName(targetFkName);
+          .onUpdate('CASCADE');
+
+        // Set FK constraint name (use short name for PostgreSQL due to 63 char limit)
+        if (dbType === 'postgres') {
+          const targetFkName = getShortFkConstraintName(junction.tableName, junction.targetColumn, 'tgt');
+          targetFk.withKeyName(targetFkName);
+        } else {
+          const targetFkName = getShortFkName(junction.sourceTable, junction.sourcePropertyName, 'tgt');
+          targetFk.withKeyName(targetFkName);
+        }
 
         // Composite primary key
-        table.primary([junction.sourceColumn, junction.targetColumn]);
+        // Use deterministic short name for constraint (especially for PostgreSQL 63 char limit)
+        const pkName = getShortPkName(junction.tableName);
+        table.primary([junction.sourceColumn, junction.targetColumn], pkName);
 
         // Auto-index both FK columns with short names
-        const sourceIndexName = getShortIndexName(junction.sourceTable, junction.sourcePropertyName, 'src');
-        const targetIndexName = getShortIndexName(junction.sourceTable, junction.sourcePropertyName, 'tgt');
-        table.index([junction.sourceColumn], sourceIndexName);
-        table.index([junction.targetColumn], targetIndexName);
+        // PostgreSQL automatically creates indexes for PRIMARY KEY columns, so skip for postgres
+        if (dbType !== 'postgres') {
+          const sourceIndexName = getShortIndexName(junction.sourceTable, junction.sourcePropertyName, 'src');
+          const targetIndexName = getShortIndexName(junction.sourceTable, junction.sourcePropertyName, 'tgt');
+          table.index([junction.sourceColumn], sourceIndexName);
+          table.index([junction.targetColumn], targetIndexName);
+        }
       });
 
       console.log(`✅ Created junction table: ${junction.tableName}`);
@@ -540,7 +571,7 @@ async function createAllTables(
   await addForeignKeys(knex, schemas);
 
   // Phase 3: Create junction tables
-  await createJunctionTables(knex, schemas);
+  await createJunctionTables(knex, schemas, dbType);
 
   console.log('✅ All tables created successfully!');
 }
@@ -557,6 +588,8 @@ async function ensureDatabaseExists(): Promise<void> {
   const DB_NAME = process.env.DB_NAME || 'enfyra';
 
   // Connect without database to create it
+  // For PostgreSQL, connect to 'postgres' database (always exists)
+  // For MySQL, can connect without specifying database
   const tempKnex = knex({
     client: DB_TYPE === 'postgres' ? 'pg' : 'mysql2',
     connection: {
@@ -564,6 +597,7 @@ async function ensureDatabaseExists(): Promise<void> {
       port: DB_PORT,
       user: DB_USERNAME,
       password: DB_PASSWORD,
+      ...(DB_TYPE === 'postgres' && { database: 'postgres' }),
     },
   });
 

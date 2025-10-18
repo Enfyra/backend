@@ -3,10 +3,58 @@
  * These follow TypeORM conventions for compatibility
  */
 
+import * as crypto from 'crypto';
+
+/**
+ * PostgreSQL identifier length limit (63 chars)
+ */
+const PG_IDENTIFIER_LIMIT = 63;
+
+/**
+ * Generate deterministic short hash for long identifiers
+ * Uses first 8 chars of MD5 to ensure uniqueness
+ */
+function getShortHash(input: string): string {
+  return crypto.createHash('md5').update(input).digest('hex').substring(0, 8);
+}
+
+/**
+ * Get short primary key constraint name for junction tables
+ * PostgreSQL has 63 char limit for identifiers
+ *
+ * @example
+ * getShortPkName('method_definition_route_permissions_route_permission_definition')
+ * // Returns: 'j_a1b2c3d4_pk' (deterministic hash-based name)
+ */
+export function getShortPkName(junctionTableName: string): string {
+  if (junctionTableName.length <= PG_IDENTIFIER_LIMIT - 3) {
+    return `${junctionTableName}_pk`;
+  }
+  const hash = getShortHash(junctionTableName);
+  return `j_${hash}_pk`;
+}
+
+/**
+ * Get short foreign key constraint name
+ * PostgreSQL has 63 char limit for identifiers
+ *
+ * @example
+ * getShortFkConstraintName('method_definition_route_permissions_route_permission_definition', 'methodDefinitionId')
+ * // Returns: 'j_a1b2c3d4_src_fk' (deterministic hash-based name)
+ */
+export function getShortFkConstraintName(junctionTableName: string, columnName: string, direction: 'src' | 'tgt'): string {
+  const fullName = `${junctionTableName}_${columnName}_foreign`;
+  if (fullName.length <= PG_IDENTIFIER_LIMIT) {
+    return fullName;
+  }
+  const hash = getShortHash(junctionTableName);
+  return `j_${hash}_${direction}_fk`;
+}
+
 /**
  * Get junction table name following TypeORM convention
  * Format: {sourceTable}_{propertyName}_{targetTable}
- * 
+ *
  * @example
  * getJunctionTableName('route_definition', 'targetTables', 'table_definition')
  * // Returns: 'route_definition_targetTables_table_definition'
@@ -19,23 +67,19 @@ export function getJunctionTableName(
   // Junction table naming: source_property_target
   // Only created from original relation (not inverse) to avoid duplicates
   const fullName = `${sourceTable}_${propertyName}_${targetTable}`;
-  
-  // MySQL limit is 64 characters  
-  if (fullName.length <= 64) {
+
+  // PostgreSQL limit is 63 characters (stricter than MySQL's 64)
+  if (fullName.length <= PG_IDENTIFIER_LIMIT) {
     return fullName;
   }
-  
-  // If too long, use hash-based shortened name
-  const hash = require('crypto')
-    .createHash('md5')
-    .update(fullName)
-    .digest('hex')
-    .substring(0, 8);
-  
+
+  // If too long, use hash-based shortened name (deterministic!)
+  const hash = getShortHash(fullName);
+
   const sourceAbbr = sourceTable.replace(/_definition/g, '').substring(0, 10);
   const propAbbr = propertyName.substring(0, 10);
   const targetAbbr = targetTable.replace(/_definition/g, '').substring(0, 10);
-  
+
   return `j_${hash}_${sourceAbbr}_${propAbbr}_${targetAbbr}`;
 }
 

@@ -24,6 +24,7 @@ export class DynamicInterceptor<T> implements NestInterceptor<T, any> {
     if (hooks?.length) {
       for (const hook of hooks) {
         if (!hook.preHook) continue;
+
         try {
           const code = hook.preHook;
           const preHookTimeout = hook.preHookTimeout || this.configService.get<number>('DEFAULT_PREHOOK_TIMEOUT', 3000);

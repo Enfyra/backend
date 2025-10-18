@@ -458,6 +458,7 @@ async function handleRelationTypeChange(
     // 2. Create new FK column (calculate from new propertyName - covers rename)
     const newFkColumn = getForeignKeyColumnName(newRel.propertyName);
     logger.log(`    ➕ Create FK column: ${newFkColumn} → ${newRel.targetTableName}.id`);
+    logger.log(`    ⚠️  Note: FK column will be created as NULLABLE to avoid data constraint errors`);
 
     // Validate FK column doesn't conflict
     validateFkColumnNotConflict(
@@ -468,10 +469,13 @@ async function handleRelationTypeChange(
       `relation type change ${oldRel.type} → ${newRel.type} for '${newRel.propertyName}'`
     );
 
+    // IMPORTANT: Force nullable=true when migrating from M2M to M2O/O2O
+    // because existing rows will have NULL values in the new FK column
+    // User must manually populate data before changing to NOT NULL
     diff.columns.create.push({
       name: newFkColumn,
       type: 'int',
-      isNullable: newRel.isNullable ?? true,
+      isNullable: true, // Force nullable to avoid FK constraint errors
       isForeignKey: true,
       foreignKeyTarget: newRel.targetTableName,
       foreignKeyColumn: 'id',

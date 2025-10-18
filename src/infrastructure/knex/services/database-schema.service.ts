@@ -122,8 +122,10 @@ export class DatabaseSchemaService {
    */
   private async getPostgreSQLTableSchema(tableName: string, knex: any): Promise<any> {
     // Get table info
+    // Note: PostgreSQL doesn't have TABLE_COMMENT in information_schema.tables like MySQL
+    // Table comments in PostgreSQL are stored in pg_description catalog, not information_schema
     const tableInfo = await knex('information_schema.tables')
-      .select('table_name', 'table_comment')
+      .select('table_name')
       .where('table_schema', 'public')
       .where('table_name', tableName)
       .first();

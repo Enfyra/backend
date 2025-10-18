@@ -28,10 +28,23 @@ export class AuthService {
 
   async login(body: LoginAuthDto) {
     const { email, password } = body;
-    
+
     // Find user by email
     const user = await this.queryBuilder.findOneWhere('user_definition', { email });
-    if (!user || !(await this.bcryptService.compare(password, user.password))) {
+
+    if (!user || !user.password) {
+      throw new BadRequestException(`Login failed!`);
+    }
+
+    // Test: create a new hash from the input password to verify bcrypt is working
+    const testHash = await this.bcryptService.hash(password);
+    const testCompare = await this.bcryptService.compare(password, testHash);
+    console.log('🔐 Test hash/compare (should be true):', testCompare);
+
+    const isMatch = await this.bcryptService.compare(password, user.password);
+    console.log('🔐 Compare result:', isMatch);
+
+    if (!isMatch) {
       throw new BadRequestException(`Login failed!`);
     }
 
